@@ -44,7 +44,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.app.ActivityCompat.requestPermissions
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
@@ -69,7 +68,6 @@ fun BluetoothDeviceListScreen(
     val isBluetoothEnabled by remember { mutableStateOf(bluetoothAdapter?.isEnabled ?: false) }
     val discoveredDevices = remember { mutableStateListOf<BluetoothDevice>() }
     var scanning by remember { mutableStateOf(false) }
-    var bluetoothGatt by remember { mutableStateOf<BluetoothGatt?>(null) }
     var scanCallback by remember { mutableStateOf<ScanCallback?>(null) }
     val coroutineScope = rememberCoroutineScope()
 
@@ -85,7 +83,8 @@ fun BluetoothDeviceListScreen(
     ) { permissions ->
         val scanPermissionGranted = permissions[Manifest.permission.BLUETOOTH_SCAN] ?: false
         val connectPermissionGranted = permissions[Manifest.permission.BLUETOOTH_CONNECT] ?: false
-        val locationPermissionGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] ?: false
+        val locationPermissionGranted =
+            permissions[Manifest.permission.ACCESS_FINE_LOCATION] ?: false
 
         if (scanPermissionGranted && connectPermissionGranted && locationPermissionGranted) {
             Log.d("Bluetooth", "Permissions granted. Starting scan.")
@@ -105,24 +104,44 @@ fun BluetoothDeviceListScreen(
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 Log.d("BluetoothGatt", "Connected to GATT server.")
                 bluetoothViewModel.updateConnectionState(deviceAddress, "Connected")
-                stopBluetoothScan(bluetoothAdapter, context, scanCallback)  // Stop scanning when connected
+                stopBluetoothScan(
+                    bluetoothAdapter,
+                    context,
+                    scanCallback
+                )  // Stop scanning when connected
                 scanning = false
                 gatt?.discoverServices()
                 bluetoothViewModel.updateConnectedDevice(deviceAddress)  // Persist the connected device
+                bluetoothViewModel.bluetoothGatt = gatt // Persist the GATT connection
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 Log.d("BluetoothGatt", "Disconnected from GATT server.")
                 bluetoothViewModel.updateConnectionState(deviceAddress, "Idle")
-                bluetoothGatt = null
-                bluetoothViewModel.clearConnection()
-                // Restart scanning after disconnecting
+                bluetoothViewModel.clearConnection() // Clear connection data
+
                 coroutineScope.launch {
-                    delay(1000)  // Small delay to give the device time to restart advertising
-                    discoveredDevices.clear()  // Clear the list of discovered devices
-                    scanning = true
-                    startBluetoothScan(bluetoothAdapter, discoveredDevices, context, scanCallback)
+                    Log.d("BluetoothGatt", "Delaying restart scan by 1000ms.")
+                    delay(1000)  // Wait for 1 second before restarting the scan
+                    if (!scanning) {
+                        Log.d("BluetoothGatt", "Restarting scan after disconnection.")
+                        discoveredDevices.clear()  // Clear the list of discovered devices
+                        scanning = true
+
+                        if (scanCallback == null) {
+                            Log.d("BluetoothGatt", "Scan callback is null. Initializing callback.")
+                            scanCallback = getScanCallback(discoveredDevices)
+                        }
+
+                        if (hasBluetoothPermissions(context)) {
+                            Log.d("BluetoothGatt", "Permissions granted. Starting scan.")
+                            startBluetoothScan(bluetoothAdapter, discoveredDevices, context, scanCallback)
+                        } else {
+                            Log.e("BluetoothGatt", "Bluetooth permissions not granted. Cannot start scan.")
+                        }
+                    }
                 }
             }
         }
+
 
         override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
@@ -163,51 +182,90 @@ fun BluetoothDeviceListScreen(
         permissionLauncher.launch(permissionsToRequest.toTypedArray())
     }
 
-    // Automatically start scanning when the screen is opened
+    fun hasBluetoothPermissions(context: Context): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.BLUETOOTH_SCAN
+            ) == PackageManager.PERMISSION_GRANTED &&
+                    ContextCompat.checkSelfPermission(
+                        context,
+                        Manifest.permission.BLUETOOTH_CONNECT
+                    ) == PackageManager.PERMISSION_GRANTED &&
+                    ContextCompat.checkSelfPermission(
+                        context,
+                        Manifest.permission.ACCESS_FINE_LOCATION
+                    ) == PackageManager.PERMISSION_GRANTED
+        } else {
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.BLUETOOTH
+            ) == PackageManager.PERMISSION_GRANTED &&
+                    ContextCompat.checkSelfPermission(
+                        context,
+                        Manifest.permission.BLUETOOTH_ADMIN
+                    ) == PackageManager.PERMISSION_GRANTED &&
+                    ContextCompat.checkSelfPermission(
+                        context,
+                        Manifest.permission.ACCESS_FINE_LOCATION
+                    ) == PackageManager.PERMISSION_GRANTED
+        }
+    }
+
     LaunchedEffect(Unit) {
-        if (!scanning) {
+        if (!scanning && bluetoothViewModel.bluetoothGatt == null) {
             scanning = true
             requestPermissions()  // Request permissions and start scanning automatically
             Log.d("Bluetooth", "Starting BLE scan when screen is opened.")
         } else {
-            Log.d("Bluetooth", "BLE scan is already running.")
+            Log.d("Bluetooth", "Scan is already running or device is connected.")
         }
     }
-
 
     // Function to connect to a Bluetooth device
     fun connectToGattDevice(device: BluetoothDevice, context: Context) {
         if (hasBluetoothPermissions(context)) {
-            bluetoothViewModel.updateConnectionState(device.address, "Connecting")
-            val gatt = device.connectGatt(context, false, gattCallback)
-            bluetoothGatt = gatt
-            bluetoothViewModel.updateConnectedDevice(device.address)
-            Log.d("BluetoothGatt", "Connecting to GATT server...")
+            if (bluetoothViewModel.bluetoothGatt == null) { // Check if already connected
+                if (scanning) {
+                    stopBluetoothScan(bluetoothAdapter, context, scanCallback)
+                    scanning = false
+                    Log.d("Bluetooth", "Stopping BLE scan before connecting to GATT server...")
+                }
+                bluetoothViewModel.updateConnectionState(device.address, "Connecting")
+                val gatt = device.connectGatt(context, false, gattCallback)
+                bluetoothViewModel.bluetoothGatt = gatt
+                bluetoothViewModel.updateConnectedDevice(device.address)
+                Log.d("BluetoothGatt", "Connecting to GATT server...")
+            } else {
+                Log.d("BluetoothGatt", "Already connected to GATT.")
+            }
         }
     }
 
     // Function to disconnect from a Bluetooth device and restart the scan
     fun disconnectFromGattDevice(device: BluetoothDevice) {
-        // Check if we have an active GATT connection
-        if (bluetoothGatt != null) {
+        val gatt = bluetoothViewModel.bluetoothGatt
+        if (gatt != null) { // Ensure there's an active GATT connection
             Log.d("BluetoothGatt", "Attempting to disconnect from device: ${device.address}")
-            bluetoothGatt?.disconnect()
+            gatt.disconnect()
             bluetoothViewModel.updateConnectionState(device.address, "Idle")
-            Log.d("BluetoothGatt", "Closing GATT connection for device: ${device.address}")
-            bluetoothGatt?.close()
-            bluetoothGatt = null  // Set the GATT client to null to prevent memory leaks
-            bluetoothViewModel.clearConnection()  // Clear the connection in the ViewModel
-            Log.d("BluetoothGatt", "Disconnected and GATT closed.")
 
-            // Restart scanning after disconnecting
-            coroutineScope.launch {
-                delay(1000)  // Give time for the device to start advertising again
-                discoveredDevices.clear()  // Clear discovered devices
-                scanning = true
-                startBluetoothScan(bluetoothAdapter, discoveredDevices, context, scanCallback)
-            }
+            // After disconnecting, close the GATT client to release resources
+            Log.d("BluetoothGatt", "Closing GATT connection for device: ${device.address}")
+            gatt.close()
+            bluetoothViewModel.clearConnection()
+            Log.d("BluetoothGatt", "Disconnected and GATT closed.")
         } else {
             Log.d("BluetoothGatt", "No active GATT connection to disconnect.")
+        }
+
+        // Clear cached devices and restart scanning after a delay
+        coroutineScope.launch {
+            delay(1000)  // Wait for 1 second to allow the device to become rediscoverable
+            discoveredDevices.clear()  // Clear the list of discovered devices
+            if (scanning) {
+                startBluetoothScan(bluetoothAdapter, discoveredDevices, context, scanCallback)
+            }
         }
     }
 
@@ -246,7 +304,6 @@ fun BluetoothDeviceListScreen(
                             item {
                                 BluetoothDeviceRow(
                                     device = connectedDevice,
-                                    context = context,
                                     connectToGatt = { deviceToConnect ->
                                         coroutineScope.launch {
                                             disconnectFromGattDevice(deviceToConnect)
@@ -267,7 +324,6 @@ fun BluetoothDeviceListScreen(
                         if (device.address != connectedDeviceAddress) {
                             BluetoothDeviceRow(
                                 device = device,
-                                context = context,
                                 connectToGatt = { deviceToConnect ->
                                     coroutineScope.launch {
                                         connectToGattDevice(deviceToConnect, context)
@@ -291,7 +347,12 @@ fun BluetoothDeviceListScreen(
                                 scanCallback = getScanCallback(discoveredDevices)
                             }
                             Log.d("Bluetooth", "Starting Bluetooth scans")
-                            startBluetoothScan(bluetoothAdapter, discoveredDevices, context, scanCallback)
+                            startBluetoothScan(
+                                bluetoothAdapter,
+                                discoveredDevices,
+                                context,
+                                scanCallback
+                            )
                         } else {
                             requestPermissions()
                         }
@@ -318,7 +379,6 @@ fun BluetoothDeviceListScreen(
 @Composable
 fun BluetoothDeviceRow(
     device: BluetoothDevice,
-    context: Context,
     connectToGatt: (BluetoothDevice) -> Unit,
     connectionState: String
 ) {

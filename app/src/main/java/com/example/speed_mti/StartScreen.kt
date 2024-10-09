@@ -36,6 +36,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 
 @Composable
@@ -173,24 +174,21 @@ fun HeaderImage() {
 
 // Example function to simulate receiving data from the device
 @Composable
-fun StartScreenWithDeviceData(navController: NavHostController) {
-    // Use rememberSaveable to persist device connection and speed when navigating
+fun StartScreenWithDeviceData(navController: NavHostController, bluetoothViewModel: BluetoothViewModel = viewModel()) {
+    // Use reactive state to track connected device name and speed
+    val connectedDeviceName by bluetoothViewModel.connectedDeviceName
     var deviceSpeed by rememberSaveable { mutableStateOf(0) }
-    var connectedDeviceName by rememberSaveable { mutableStateOf("DEMO") }  // Track connected device name
 
     // Simulate receiving new speed from the device
     LaunchedEffect(Unit) {
-        // Update the speed after receiving it from the device
         deviceSpeed = 45  // Replace this with actual Bluetooth data handling
-
-        // Simulate connected device name update (replace with actual Bluetooth connection handling)
-        connectedDeviceName = "MyDeviceName"  // Replace with the actual connected device name
     }
 
     StartScreen(
         navController = navController,
         deviceSpeed = deviceSpeed,
-        connectedDeviceName = connectedDeviceName
+        connectedDeviceName = connectedDeviceName  // Dynamically pass the connected device name
     )
 }
+
 

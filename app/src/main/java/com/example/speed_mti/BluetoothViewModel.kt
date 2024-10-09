@@ -10,6 +10,9 @@ class BluetoothViewModel : ViewModel() {
     var connectedDeviceAddress = mutableStateOf<String?>(null)  // Make it reactive
         private set
 
+    var connectedDeviceName = mutableStateOf<String>("DEMO") // Reactive state for device name
+        private set
+
     var connectionStates = mutableStateMapOf<String, String>()  // Make it reactive
         private set
 
@@ -28,6 +31,7 @@ class BluetoothViewModel : ViewModel() {
     // Clear the connection
     fun clearConnection() {
         connectedDeviceAddress.value = null  // Use `.value` for mutableStateOf
+        connectedDeviceName.value = "DEMO"  // Reset the device name
         connectionStates.clear()  // Clear the state map
         bluetoothGatt = null // Clear the GATT reference as well
     }
