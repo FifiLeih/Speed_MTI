@@ -16,6 +16,7 @@ import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.RequiresApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -47,6 +48,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.UUID
@@ -57,7 +59,6 @@ val CHARACTERISTIC_UUID = UUID.fromString("0000ffe1-0000-1000-8000-00805f9b34fb"
 val CLIENT_CHARACTERISTIC_CONFIG_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
 
-@RequiresApi(Build.VERSION_CODES.S)
 @Composable
 fun BluetoothDeviceListScreen(
     navController: NavHostController,
@@ -91,7 +92,17 @@ fun BluetoothDeviceListScreen(
             if (scanCallback == null) {
                 scanCallback = getScanCallback(discoveredDevices)
             }
-            startBluetoothScan(bluetoothAdapter, discoveredDevices, context, scanCallback)
+            startBluetoothScan(
+                bluetoothAdapter,
+                discoveredDevices,
+                context,
+                scanCallback,
+                coroutineScope,
+                onScanStopped = {
+                    scanning = false  // Update the scanning state or handle other UI changes
+                    Log.d("Bluetooth", "Scan stopped after timeout")
+                }
+            )
         } else {
             Log.d("Bluetooth", "Permissions not granted.")
         }
@@ -133,9 +144,22 @@ fun BluetoothDeviceListScreen(
 
                         if (hasBluetoothPermissions(context)) {
                             Log.d("BluetoothGatt", "Permissions granted. Starting scan.")
-                            startBluetoothScan(bluetoothAdapter, discoveredDevices, context, scanCallback)
+                            startBluetoothScan(
+                                bluetoothAdapter,
+                                discoveredDevices,
+                                context,
+                                scanCallback,
+                                coroutineScope,
+                                onScanStopped = {
+                                    scanning = false  // Update the scanning state or handle other UI changes
+                                    Log.d("Bluetooth", "Scan stopped after timeout")
+                                }
+                            )
                         } else {
-                            Log.e("BluetoothGatt", "Bluetooth permissions not granted. Cannot start scan.")
+                            Log.e(
+                                "BluetoothGatt",
+                                "Bluetooth permissions not granted. Cannot start scan."
+                            )
                         }
                     }
                 }
@@ -264,12 +288,20 @@ fun BluetoothDeviceListScreen(
             delay(1000)  // Wait for 1 second to allow the device to become rediscoverable
             discoveredDevices.clear()  // Clear the list of discovered devices
             if (scanning) {
-                startBluetoothScan(bluetoothAdapter, discoveredDevices, context, scanCallback)
+                startBluetoothScan(
+                    bluetoothAdapter,
+                    discoveredDevices,
+                    context,
+                    scanCallback,
+                    coroutineScope,
+                    onScanStopped = {
+                        scanning = false  // Update the scanning state or handle other UI changes
+                        Log.d("Bluetooth", "Scan stopped after timeout")
+                    })
             }
         }
     }
 
-    // UI Elements remain the same
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -351,7 +383,12 @@ fun BluetoothDeviceListScreen(
                                 bluetoothAdapter,
                                 discoveredDevices,
                                 context,
-                                scanCallback
+                                scanCallback,
+                                coroutineScope,
+                                onScanStopped = {
+                                    // Callback to stop scanning and update UI
+                                    scanning = false  // Stop scanning and update the button text
+                                }
                             )
                         } else {
                             requestPermissions()
@@ -452,7 +489,9 @@ fun startBluetoothScan(
     bluetoothAdapter: BluetoothAdapter?,
     discoveredDevices: MutableList<BluetoothDevice>,
     context: Context,
-    scanCallback: ScanCallback?
+    scanCallback: ScanCallback?,
+    coroutineScope: CoroutineScope,
+    onScanStopped: () -> Unit
 ) {
     if (hasBluetoothPermissions(context)) {
         try {
@@ -460,6 +499,15 @@ fun startBluetoothScan(
             if (scanCallback != null) {
                 Log.d("Bluetooth", "Starting BLE scan")
                 scanner?.startScan(scanCallback)
+
+                // Stop scanning after 20 seconds
+                coroutineScope.launch {
+                    delay(20000)  // 20 seconds delay
+                    Log.d("Bluetooth", "Stopping BLE scan after 20 seconds")
+                    stopBluetoothScan(bluetoothAdapter, context, scanCallback)
+
+                    onScanStopped()
+                }
             }
         } catch (e: SecurityException) {
             Log.e("Bluetooth", "BLE Permission denied: ${e.message}")
