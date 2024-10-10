@@ -3,7 +3,6 @@ package com.example.speed_mti
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.*
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -33,11 +32,14 @@ fun MainApp() {
         startDestination = "startScreen"
     ) {
         composable("startScreen") {
-            StartScreenWithDeviceData(navController = navController)
+            StartScreen(navController = navController, bluetoothViewModel = bluetoothViewModel)
         }
 
         composable("bluetoothDeviceListScreen") {
-            BluetoothDeviceListScreen(navController = navController, bluetoothViewModel = bluetoothViewModel)
+            BluetoothDeviceListScreen(
+                navController = navController,
+                bluetoothViewModel = bluetoothViewModel
+            )
         }
     }
 }

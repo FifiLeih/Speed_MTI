@@ -15,8 +15,6 @@ import android.os.Build
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.annotation.RequiresApi
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -111,10 +109,15 @@ fun BluetoothDeviceListScreen(
     // GATT Callback for managing Bluetooth GATT events (moved to the main composable scope)
     val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
-            val deviceAddress = gatt?.device?.address ?: return
+            val device = gatt?.device ?: return  // Get the BluetoothDevice object
+            val deviceAddress = device.address
+            val deviceName = device.name ?: "Unknown Device"  // Get the device name
+
             if (newState == BluetoothProfile.STATE_CONNECTED) {
-                Log.d("BluetoothGatt", "Connected to GATT server.")
+                Log.d("BluetoothGatt", "Connected to GATT server. Device Name: $deviceName")
                 bluetoothViewModel.updateConnectionState(deviceAddress, "Connected")
+                bluetoothViewModel.updateConnectedDevice(device) // Pass the whole BluetoothDevice object
+                bluetoothViewModel.updateConnectedDeviceName(deviceName) // Update device name here
                 stopBluetoothScan(
                     bluetoothAdapter,
                     context,
@@ -122,10 +125,9 @@ fun BluetoothDeviceListScreen(
                 )  // Stop scanning when connected
                 scanning = false
                 gatt?.discoverServices()
-                bluetoothViewModel.updateConnectedDevice(deviceAddress)  // Persist the connected device
                 bluetoothViewModel.bluetoothGatt = gatt // Persist the GATT connection
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                Log.d("BluetoothGatt", "Disconnected from GATT server.")
+                Log.d("BluetoothGatt", "Disconnected from GATT server. Address: $deviceAddress")
                 bluetoothViewModel.updateConnectionState(deviceAddress, "Idle")
                 bluetoothViewModel.clearConnection() // Clear connection data
 
@@ -151,7 +153,8 @@ fun BluetoothDeviceListScreen(
                                 scanCallback,
                                 coroutineScope,
                                 onScanStopped = {
-                                    scanning = false  // Update the scanning state or handle other UI changes
+                                    scanning =
+                                        false  // Update the scanning state or handle other UI changes
                                     Log.d("Bluetooth", "Scan stopped after timeout")
                                 }
                             )
@@ -169,7 +172,7 @@ fun BluetoothDeviceListScreen(
 
         override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                Log.d("BluetoothGatt", "Services discovered.")
+                Log.d("BluetoothGatt", "Services discovered for device: ${gatt?.device?.name}")
                 gatt?.requestMtu(256)  // Request higher MTU size
             }
         }
@@ -258,7 +261,7 @@ fun BluetoothDeviceListScreen(
                 bluetoothViewModel.updateConnectionState(device.address, "Connecting")
                 val gatt = device.connectGatt(context, false, gattCallback)
                 bluetoothViewModel.bluetoothGatt = gatt
-                bluetoothViewModel.updateConnectedDevice(device.address)
+                bluetoothViewModel.updateConnectedDevice(device)
                 Log.d("BluetoothGatt", "Connecting to GATT server...")
             } else {
                 Log.d("BluetoothGatt", "Already connected to GATT.")
