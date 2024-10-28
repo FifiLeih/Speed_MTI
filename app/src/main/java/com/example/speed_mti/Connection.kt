@@ -5,6 +5,7 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
+import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothProfile
 import android.bluetooth.le.ScanCallback
@@ -108,6 +109,9 @@ fun BluetoothDeviceListScreen(
 
     // GATT Callback for managing Bluetooth GATT events (moved to the main composable scope)
     val gattCallback = object : BluetoothGattCallback() {
+
+        var bluetoothGatt: BluetoothGatt? = null  // This will hold the active GATT connection
+
         override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
             val device = gatt?.device ?: return  // Get the BluetoothDevice object
             val deviceAddress = device.address
@@ -126,6 +130,8 @@ fun BluetoothDeviceListScreen(
                 scanning = false
                 gatt?.discoverServices()
                 bluetoothViewModel.bluetoothGatt = gatt // Persist the GATT connection
+                bluetoothViewModel.setGattCallback(this)
+
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 Log.d("BluetoothGatt", "Disconnected from GATT server. Address: $deviceAddress")
                 bluetoothViewModel.updateConnectionState(deviceAddress, "Idle")
@@ -168,14 +174,40 @@ fun BluetoothDeviceListScreen(
                 }
             }
         }
-
-
         override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 Log.d("BluetoothGatt", "Services discovered for device: ${gatt?.device?.name}")
-                gatt?.requestMtu(256)  // Request higher MTU size
+                gatt?.requestMtu(512)  // Request higher MTU size
             }
         }
+
+        override fun onCharacteristicWrite(
+            gatt: BluetoothGatt?,
+            characteristic: BluetoothGattCharacteristic?,
+            status: Int
+        ) {
+            super.onCharacteristicWrite(gatt, characteristic, status)
+            bluetoothViewModel.onCharacteristicWrite(status)  // Notify ViewModel when a chunk is written
+        }
+
+        var totalReceivedData = ""
+        override fun onCharacteristicChanged(
+            gatt: BluetoothGatt?, characteristic: BluetoothGattCharacteristic?
+        ) {
+            val data = characteristic?.value?.let { String(it) }
+
+            if (data != null) {
+                totalReceivedData += data  // Accumulate the data
+
+                // If you use a timeout or other mechanism to detect when all data is received,
+                // after processing the total data, reset the `totalReceivedData`.
+                bluetoothViewModel.receiveDataFromDevice(totalReceivedData)  // Pass total data
+
+                // After passing the complete data, reset `totalReceivedData` to avoid duplicates
+                totalReceivedData = ""  // Clear it after the full message is processed
+            }
+        }
+
 
         override fun onMtuChanged(gatt: BluetoothGatt?, mtu: Int, status: Int) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
@@ -276,7 +308,6 @@ fun BluetoothDeviceListScreen(
             Log.d("BluetoothGatt", "Attempting to disconnect from device: ${device.address}")
             gatt.disconnect()
             bluetoothViewModel.updateConnectionState(device.address, "Idle")
-
             // After disconnecting, close the GATT client to release resources
             Log.d("BluetoothGatt", "Closing GATT connection for device: ${device.address}")
             gatt.close()
@@ -564,9 +595,3 @@ fun getScanCallback(discoveredDevices: MutableList<BluetoothDevice>): ScanCallba
         }
     }
 }
-
-
-
-
-
-
