@@ -1,111 +1,64 @@
 package com.example.speed_mti
 
-import android.app.Activity
 import android.content.Context
-import android.content.Intent
 import android.net.Uri
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
-
 
 @Composable
 fun StartScreen(
     navController: NavHostController,
-    bluetoothViewModel: BluetoothViewModel = viewModel()
+    bluetoothViewModel: BluetoothViewModel = viewModel(),
+    context: Context
 ) {
-    // Collecting the state from ViewModel
-    val connectedDeviceName by bluetoothViewModel.connectedDeviceName.collectAsState()  // Device name
-    val receivedData by bluetoothViewModel.receivedData.collectAsState()  // Real-time received data
-    val selectedFileName by bluetoothViewModel.selectedFileName.collectAsState()  // Selected file name
-
-    // Access to the current context
-    val context = LocalContext.current
+    val connectedDeviceName by bluetoothViewModel.connectedDeviceName.collectAsState()
+    val receivedData by bluetoothViewModel.receivedData.collectAsState()
+    val selectedFileName by bluetoothViewModel.selectedFileName.collectAsState()
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
+        modifier = Modifier.fillMaxSize()
     ) {
-        // Header
         HeaderSection(navController)
-
-        // Body section for sending/receiving data
         BodySection(
             modifier = Modifier.weight(1f),
-            onSendData = { data ->
-                // Send data to the device
-                bluetoothViewModel.sendDataToDevice(data)
-            },
-            onSendFile = {
-                // Send the selected file to the device
-                bluetoothViewModel.sendFileToDevice()  // No need to pass a file
-            },
+            onSendFile = { bluetoothViewModel.startFileTransfer() },
             onFileSelected = { uri ->
-                // Handle file selection and call ViewModel method
-                bluetoothViewModel.selectFile(context, uri)
-            },
-            receivedData = receivedData,  // Pass received data to BodySection
-            selectedFileName = selectedFileName,  // Pass the selected file name
-            context = context  // Pass the current context
+                bluetoothViewModel.selectFile(
+                    context,
+                    uri
+                )
+            }, // Use context here
+            receivedData = receivedData,
+            selectedFileName = selectedFileName
         )
-
-        // Footer with the connected device name
         FooterSection(deviceName = connectedDeviceName)
     }
 }
 
-
 @Composable
 fun BodySection(
     modifier: Modifier = Modifier,
-    onSendData: (ByteArray) -> Unit,  // Function to send data as ByteArray
-    onSendFile: () -> Unit,  // Function to send a file
-    onFileSelected: (Uri) -> Unit,  // Function to handle file selection
-    receivedData: String,  // Data received from the device
-    selectedFileName: String,  // Selected file name
-    context: Context  // Context for file picker
+    onSendFile: () -> Unit,
+    onFileSelected: (Uri) -> Unit,
+    receivedData: String,
+    selectedFileName: String
 ) {
     var sendData by remember { mutableStateOf("") }
 
@@ -117,10 +70,9 @@ fun BodySection(
         verticalArrangement = Arrangement.Top,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Large Text Field for Receiving Data
         Box(
             modifier = Modifier
-                .weight(2f)  // Make this box larger to resemble the large receiving area
+                .weight(2f)
                 .fillMaxWidth()
                 .background(Color.LightGray, shape = MaterialTheme.shapes.small)
                 .padding(8.dp)
@@ -134,52 +86,17 @@ fun BodySection(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Text Field for Sending Data
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .background(Color.Gray, shape = MaterialTheme.shapes.small)
-                .padding(8.dp)
-        ) {
-            BasicTextField(
-                value = sendData,
-                onValueChange = { newValue -> sendData = newValue },
-                modifier = Modifier.fillMaxWidth(),
-                textStyle = TextStyle(color = Color.White),
-                singleLine = true,
-                decorationBox = { innerTextField ->
-                    if (sendData.isEmpty()) {
-                        Text("Enter data to send", color = Color.LightGray)
-                    }
-                    innerTextField() // Adds the inner text field for user input
-                }
-            )
-        }
-
         Spacer(modifier = Modifier.height(16.dp))
 
-        // File picker button
-        FilePickerLauncher(context) { uri ->
-            onFileSelected(uri)  // Update ViewModel with the selected file
-        }
+        FilePickerLauncher { uri -> onFileSelected(uri) }
 
-        // Display selected file name
         Text(text = "Selected file: $selectedFileName")
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Send Button for Sending Data
         Button(
             onClick = {
-                if (sendData.isNotEmpty()) {
-                    // Convert text to ByteArray and send if data exists
-                    onSendData(sendData.toByteArray())
-                    sendData = ""  // Clear input after sending
-                } else {
-                    // Send the file if no text data is present
-                    onSendFile()
-                }
+                onSendFile()
             },
             modifier = Modifier.fillMaxWidth(),
             colors = ButtonDefaults.buttonColors(containerColor = Color.Blue)
@@ -190,23 +107,20 @@ fun BodySection(
 }
 
 @Composable
-fun FilePickerLauncher(context: Context, onFileSelected: (Uri) -> Unit) {
+fun FilePickerLauncher(onFileSelected: (Uri) -> Unit) {
     val launcher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
-        uri?.let { onFileSelected(it) } // Pass the selected file's URI
+        uri?.let { onFileSelected(it) }
     }
 
     Button(
-        onClick = { launcher.launch("*/*") }, // Launch the file picker
+        onClick = { launcher.launch("*/*") },
         modifier = Modifier.padding(8.dp)
     ) {
         Text("Select File")
     }
 }
-
-
-
 
 @Composable
 fun HeaderSection(navController: NavHostController) {
@@ -229,7 +143,7 @@ fun FooterSection(deviceName: String) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color.Black) // Black background for footer
+            .background(Color.Black)
             .padding(16.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
@@ -242,7 +156,7 @@ fun FooterSection(deviceName: String) {
             )
             Text(
                 text = "Disable",
-                color = Color.Red, // Red text for disable
+                color = Color.Red,
                 style = MaterialTheme.typography.bodyLarge
             )
         }
@@ -254,8 +168,8 @@ fun FooterSection(deviceName: String) {
                 style = MaterialTheme.typography.bodyLarge
             )
             Text(
-                text = deviceName,  // Display the connected device name or "DEMO"
-                color = Color.Red,   // Red text for device status
+                text = deviceName,
+                color = Color.Red,
                 style = MaterialTheme.typography.bodyLarge
             )
         }
@@ -263,7 +177,7 @@ fun FooterSection(deviceName: String) {
         TextButton(onClick = { /* Handle reset click */ }) {
             Text(
                 text = "Reset",
-                color = Color.Red // Red text for reset
+                color = Color.Red
             )
         }
     }
@@ -291,11 +205,3 @@ fun HeaderImage() {
         modifier = Modifier.size(40.dp)
     )
 }
-
-
-
-
-
-
-
-

@@ -1,17 +1,22 @@
 package com.example.speed_mti
 
+import BluetoothScanManager
+import android.app.Application
+import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
-import android.bluetooth.BluetoothGattCharacteristic
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Log
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.speed_mti.BluetoothGattManager.Companion.CHARACTERISTIC_UUID
+import com.example.speed_mti.BluetoothGattManager.Companion.SERVICE_UUID
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -21,60 +26,72 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-class BluetoothViewModel : ViewModel() {
+class BluetoothViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val _connectedDeviceName =
-        MutableStateFlow<String>("DEMO")  // Use MutableStateFlow for reactivity
-    val connectedDeviceName: StateFlow<String> =
-        _connectedDeviceName.asStateFlow()  // Expose as StateFlow
+    // State variables for connected device
+    private val _connectedDeviceName = MutableStateFlow("DEMO")
+    val connectedDeviceName: StateFlow<String> = _connectedDeviceName.asStateFlow()
+    private var connectedDeviceAddress = mutableStateOf<String?>(null)
 
-    var connectedDeviceAddress = mutableStateOf<String?>(null)
-        private set
-
+    // State for selected file and received data
     private val _selectedFileUri = MutableStateFlow<Uri?>(null)
     val selectedFileUri: StateFlow<Uri?> = _selectedFileUri
-
     private val _selectedFileName = MutableStateFlow("No file selected")
     val selectedFileName: StateFlow<String> = _selectedFileName
-
     private val _fileContent = MutableStateFlow<ByteArray?>(null)
     val fileContent: StateFlow<ByteArray?> = _fileContent
-
-    private val _receivedData = MutableStateFlow<String>("")
+    private val _receivedData = MutableStateFlow("")
     val receivedData: StateFlow<String> = _receivedData
 
-    private var buffer = StringBuilder()  // Buffer to accumulate incoming data
-    private var receiveJob: Job? = null   // Job for managing the timeout delay
+    // Buffer for data reception and timeout management
+    private var buffer = StringBuilder()
+    private var receiveJob: Job? = null
+    private val receiveTimeout = 500L  // Timeout for data reception
 
-    private val receiveTimeout = 500L  // Timeout in milliseconds (adjust as needed)
+    private var bluetoothGatt: BluetoothGatt? = null
 
+    private val bluetoothAdapter: BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()
+    private val discoveredDevices = mutableStateListOf<BluetoothDevice>()
     var connectionStates = mutableStateMapOf<String, String>()
-        private set
 
-    var bluetoothGatt: BluetoothGatt? = null
+    private val bluetoothScanManager = BluetoothScanManager(
+        bluetoothAdapter = bluetoothAdapter,
+        discoveredDevices = discoveredDevices,
+        context = getApplication(),
+        coroutineScope = viewModelScope,
+        onScanStopped = { /* Handle UI updates or other logic here if needed */ }
+    )
 
-    private var gattCallback: BluetoothGattCallback? = null
+    private val bluetoothGattManager = BluetoothGattManager(
+        bluetoothViewModel = this,
+        context = getApplication(),
+        coroutineScope = viewModelScope
+    )
 
+    // Start and stop scan functions
+    fun startScan() = bluetoothScanManager.startBluetoothScan()
+    fun stopScan() = bluetoothScanManager.stopBluetoothScan()
 
-    // This function will be called after the GATT connection is established
-    fun setGattCallback(callback: BluetoothGattCallback) {
-        gattCallback = callback
-    }
+    // Connection management
+    fun connectToDevice(device: BluetoothDevice) = bluetoothGattManager.connectToDevice(device)
+    fun disconnectDevice() = bluetoothGattManager.disconnectDevice()
 
-    fun updateConnectedDeviceName(name: String?) {
+    fun getDiscoveredDevices(): List<BluetoothDevice> = discoveredDevices
+
+    private fun updateConnectedDeviceName(name: String?) {
         viewModelScope.launch {
-            _connectedDeviceName.value = name ?: "Unknown Device"  // Update device name reactively
+            _connectedDeviceName.value = name ?: "Unknown Device"
             Log.d("BluetoothViewModel", "Device name updated to: ${_connectedDeviceName.value}")
         }
     }
 
-    fun updateConnectedDevice(address: BluetoothDevice?) {
-        connectedDeviceAddress.value = address?.address
+    fun updateConnectedDevice(device: BluetoothDevice?) {
+        connectedDeviceAddress.value = device?.address
+        updateConnectedDeviceName(device?.name)
         Log.d(
             "BluetoothViewModel",
-            "Updated device: ${address?.name ?: "Unknown Device"}, Address: ${address?.address}"
+            "Updated device: ${device?.name ?: "Unknown"}, Address: ${device?.address}"
         )
-        updateConnectedDeviceName(address?.name)
     }
 
     fun updateConnectionState(address: String, state: String) {
@@ -90,132 +107,92 @@ class BluetoothViewModel : ViewModel() {
     }
 
     fun receiveDataFromDevice(data: String) {
-        buffer.append(data)  // Append incoming data to the buffer
+        buffer.append(data)
 
-        // Cancel any existing timeout job
+        // Cancel existing timeout job if any, and start a new one
         receiveJob?.cancel()
-
-        // Start a new timeout job
         receiveJob = CoroutineScope(Dispatchers.IO).launch {
-            delay(receiveTimeout)  // Wait for the timeout period
-
-            // After the timeout, we assume the message is complete
-            _receivedData.value =
-                buffer.toString()  // Update the receivedData with the full message
-
-            buffer.clear()  // Clear the buffer after processing the message
+            delay(receiveTimeout)
+            _receivedData.value = buffer.toString()
+            buffer.clear()
         }
     }
 
-    // Function to handle file selection (sets both name and content)
+    // Handle file selection and content retrieval
     fun selectFile(context: Context, uri: Uri) {
         _fileContent.value = readFileFromUri(context, uri)
-        // Log file content size to verify it's loaded correctly
-        val fileSize = _fileContent.value?.size ?: 0
-        Log.d("BluetoothViewModel", "File selected, size: $fileSize bytes")
+        Log.d("BluetoothViewModel", "File selected, size: ${_fileContent.value?.size ?: 0} bytes")
     }
 
-    private var fileData: ByteArray? = null
-    private var offset = 0
-    private val maxChunkSize = 20  // Max BLE chunk size
-
-
-    // Function to start sending file data in chunks
-    fun sendFileToDevice() {
-        val data = _fileContent.value
-        if (data != null) {
-            offset = 0
-            sendNextChunk()  // Start sending the first chunk
-        } else {
-            Log.e("BluetoothViewModel", "No file selected to send")
-        }
-    }
-
-    // Function to send the next chunk of data
-    private fun sendNextChunk() {
-        val data = _fileContent.value ?: return
-        if (offset < data.size) {
-            val chunkSize = minOf(maxChunkSize, data.size - offset)
-            val chunk = data.copyOfRange(offset, offset + chunkSize)
-            val characteristic = bluetoothGatt?.getService(SERVICE_UUID)
-                ?.getCharacteristic(CHARACTERISTIC_UUID)
-
-            if (characteristic != null) {
-                characteristic.value = chunk
-                val writeResult = bluetoothGatt?.writeCharacteristic(characteristic)
-                Log.d("BluetoothViewModel", "Writing chunk: $chunkSize bytes, write result: $writeResult")
-                if (writeResult == true) {
-                    offset += chunkSize  // Move the offset forward after a successful write
-                } else {
-                    Log.e("BluetoothViewModel", "Failed to write chunk")
-                }
-            } else {
-                Log.e("BluetoothViewModel", "Characteristic not found!")
-            }
-        } else {
-            Log.d("BluetoothViewModel", "File transfer complete, sent all chunks")
-        }
-    }
-
-    // Handle the result of a characteristic write
-    fun onCharacteristicWrite(status: Int) {
-        if (status == BluetoothGatt.GATT_SUCCESS) {
-            sendNextChunk()  // Send the next chunk if the previous one was successful
-        } else {
-            Log.e("BluetoothViewModel", "Failed to write chunk, status: $status")
-        }
-    }
-
-    // Send data to the device (as ByteArray)
-    fun sendDataToDevice(data: ByteArray) {
-        bluetoothGatt?.let { gatt ->
-            val characteristic = gatt.getService(SERVICE_UUID)
-                ?.getCharacteristic(CHARACTERISTIC_UUID)
-            if (characteristic != null) {
-                characteristic.value = data
-                val writeResult = gatt.writeCharacteristic(characteristic)
-                Log.d("BluetoothViewModel", "Writing data: ${data.size} bytes, write result: $writeResult")
-            } else {
-                Log.e("BluetoothViewModel", "Characteristic not found!")
-            }
-        }
-    }
-
-    // Utility function to get the file name from URI
+    // Helper to get file name from URI
     private fun uriToFileName(context: Context, uri: Uri): String {
         var result: String? = null
         if (uri.scheme == "content") {
             val cursor = context.contentResolver.query(uri, null, null, null, null)
-            try {
-                if (cursor != null && cursor.moveToFirst()) {
-                    result = cursor.getString(cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME))
+            cursor?.use {
+                if (it.moveToFirst()) {
+                    result = it.getString(it.getColumnIndex(OpenableColumns.DISPLAY_NAME))
                 }
-            } finally {
-                cursor?.close()
             }
         }
-        if (result == null) {
-            result = uri.path
-            val cut = result?.lastIndexOf('/')
-            if (cut != -1) {
-                result = result?.substring(cut!! + 1)
-            }
-        }
-        return result ?: "Unknown"
+        return result ?: uri.path?.substringAfterLast('/') ?: "Unknown"
     }
 
-    // Utility function to read the file content from URI
+    // Helper to read file content from URI and log it in hex
     private fun readFileFromUri(context: Context, uri: Uri): ByteArray? {
         return try {
-            context.contentResolver.openInputStream(uri)?.buffered()?.use { inputStream ->
-                inputStream.readBytes()
+            val fileData = context.contentResolver.openInputStream(uri)?.buffered()?.use { it.readBytes() }
+
+            // Convert the byte array to a hex string for logging
+            fileData?.let {
+                val hexString = it.joinToString(" ") { byte -> String.format("%02X", byte) }
+                Log.d("BluetoothViewModel", "File content in hex: $hexString")
             }
+
+            fileData
         } catch (e: Exception) {
             e.printStackTrace()
             null
         }
     }
+
+    private var fileData: ByteArray? = null
+    private var currentChunk = 0
+    private var mtuSize = 10  // Default MTU size, will be updated after negotiation
+    private val maxChunkSize: Int
+        get() = mtuSize - 3  // 3 bytes reserved for header
+
+    fun startFileTransfer() {
+        val data = _fileContent.value
+        if (data != null) {
+            fileData = data
+            currentChunk = 0
+            sendNextChunk()
+        } else {
+            Log.e("BluetoothViewModel", "No file selected to send.")
+        }
+    }
+
+    private fun sendNextChunk() {
+        val data = fileData ?: return
+        if (currentChunk < data.size) {
+            val chunkSize = minOf(maxChunkSize, data.size - currentChunk)
+            val chunk = data.copyOfRange(currentChunk, currentChunk + chunkSize)
+            bluetoothGattManager.writeToCharacteristic(chunk) // Write the chunk
+
+            // Move to the next chunk after write confirmation
+            currentChunk += chunkSize
+        } else {
+            Log.d("BluetoothViewModel", "File transfer complete, sent all chunks.")
+            fileData = null // Reset file data after transfer
+        }
+    }
+
+    fun onCharacteristicWrite(status: Int) {
+        if (status == BluetoothGatt.GATT_SUCCESS) {
+            sendNextChunk() // Send next chunk if the previous write was successful
+        } else {
+            Log.e("BluetoothViewModel", "Failed to write chunk, status: $status")
+        }
+    }
 }
-
-
-
