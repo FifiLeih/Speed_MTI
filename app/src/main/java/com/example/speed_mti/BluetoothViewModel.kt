@@ -43,6 +43,7 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
     private val _receivedData = MutableStateFlow("")
     val receivedData: StateFlow<String> = _receivedData
 
+
     // Buffer for data reception and timeout management
     private var buffer = StringBuilder()
     private var receiveJob: Job? = null
@@ -141,7 +142,8 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
     // Helper to read file content from URI and log it in hex
     private fun readFileFromUri(context: Context, uri: Uri): ByteArray? {
         return try {
-            val fileData = context.contentResolver.openInputStream(uri)?.buffered()?.use { it.readBytes() }
+            val fileData =
+                context.contentResolver.openInputStream(uri)?.buffered()?.use { it.readBytes() }
 
             // Convert the byte array to a hex string for logging
             fileData?.let {
@@ -156,41 +158,61 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    // MTU size property with reserved bytes for header
+    private val _mtuSize = MutableStateFlow(23)  // Default MTU size is 23 bytes
+    val mtuSize: StateFlow<Int> = _mtuSize.asStateFlow()
+
+    // Computed property for usable MTU size (MTU - 3 for header)
+    private val usableMtuSize: Int
+        get() = _mtuSize.value - 3  // 3 bytes reserved for header
+
     private var fileData: ByteArray? = null
     private var currentChunk = 0
-    private var mtuSize = 10  // Default MTU size, will be updated after negotiation
-    private val maxChunkSize: Int
-        get() = mtuSize - 3  // 3 bytes reserved for header
 
+    fun updateMtuSize(newMtuSize: Int) {
+        _mtuSize.value = newMtuSize
+        Log.d("BluetoothViewModel", "MTU size updated to: $newMtuSize")
+    }
+
+    // Start file transfer without suspension
     fun startFileTransfer() {
         val data = _fileContent.value
         if (data != null) {
             fileData = data
             currentChunk = 0
-            sendNextChunk()
+            sendNextChunk()  // Begin chunk sending process
         } else {
             Log.e("BluetoothViewModel", "No file selected to send.")
         }
     }
 
+    // Send next chunk with delay management
     private fun sendNextChunk() {
         val data = fileData ?: return
         if (currentChunk < data.size) {
-            val chunkSize = minOf(maxChunkSize, data.size - currentChunk)
+            // Calculate chunk size based on usable MTU
+            val chunkSize = minOf(usableMtuSize, data.size - currentChunk)
             val chunk = data.copyOfRange(currentChunk, currentChunk + chunkSize)
-            bluetoothGattManager.writeToCharacteristic(chunk) // Write the chunk
 
-            // Move to the next chunk after write confirmation
+            // Send the chunk; assuming `writeToCharacteristic` works asynchronously
+            bluetoothGattManager.writeToCharacteristic(chunk) // No need to check for immediate success
+
+            Log.d("BluetoothViewModel", "Chunk sent: ${chunk.size} bytes, from $currentChunk to ${currentChunk + chunkSize}")
+
+            // Move to the next chunk; actual sending will be confirmed by `onCharacteristicWrite`
             currentChunk += chunkSize
         } else {
             Log.d("BluetoothViewModel", "File transfer complete, sent all chunks.")
-            fileData = null // Reset file data after transfer
+            fileData = null  // Clear file data after transfer
         }
     }
 
+    // Handle characteristic write confirmation
     fun onCharacteristicWrite(status: Int) {
         if (status == BluetoothGatt.GATT_SUCCESS) {
-            sendNextChunk() // Send next chunk if the previous write was successful
+            viewModelScope.launch {
+                sendNextChunk()  // Continue with next chunk if the previous write was successful
+            }
         } else {
             Log.e("BluetoothViewModel", "Failed to write chunk, status: $status")
         }

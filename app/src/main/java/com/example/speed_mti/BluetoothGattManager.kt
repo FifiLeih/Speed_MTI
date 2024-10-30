@@ -59,6 +59,7 @@ class BluetoothGattManager(
                 bluetoothViewModel.updateConnectionState(deviceAddress, "Connected")
                 gatt?.discoverServices()
                 Log.d("BluetoothGattManager", "Connected to device: $deviceAddress")
+                gatt?.requestMtu(255)
             } else if (newState == BluetoothGatt.STATE_DISCONNECTED) {
                 bluetoothViewModel.updateConnectionState(deviceAddress, "Disconnected")
                 Log.d("BluetoothGattManager", "Disconnected from device: $deviceAddress")
@@ -98,8 +99,23 @@ class BluetoothGattManager(
             }
         }
 
+
+
         override fun onMtuChanged(gatt: BluetoothGatt?, mtu: Int, status: Int) {
+            super.onMtuChanged(gatt, mtu, status)
+
             if (status == BluetoothGatt.GATT_SUCCESS) {
+                Log.d("BluetoothGattManager", "MTU successfully changed to: $mtu")
+
+                // Update MTU in BluetoothViewModel
+                bluetoothViewModel.updateMtuSize(mtu)
+
+                // Proceed to discover services
+                gatt?.discoverServices()
+            } else {
+                Log.w("BluetoothGattManager", "MTU change request failed. Using default MTU size.")
+                gatt?.discoverServices()  // Continue to discover services even if MTU request fails
+            }
                 gatt?.getService(SERVICE_UUID)?.getCharacteristic(CHARACTERISTIC_UUID)?.let {
                     gatt.setCharacteristicNotification(it, true)
                     val descriptor = it.getDescriptor(CLIENT_CHARACTERISTIC_CONFIG_UUID)
@@ -109,6 +125,3 @@ class BluetoothGattManager(
             }
         }
     }
-
-
-}
